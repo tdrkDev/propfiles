@@ -1,0 +1,76 @@
+#!/bin/bash
+
+if [ "$#" -lt 2 ]; then
+    echo "Usage: $0 'proprietary-files.txt' 'vendor/.../...'"
+    exit 1
+fi
+
+PROPFILES="$(realpath ${1})"
+VENDOR="$(realpath ${2})"
+
+# Check missing files
+echo "Checking for missing files..."
+IFS=$'\n'
+for FILE in $(cat $PROPFILES); do
+    [ -z "$FILE" ] && continue
+    [[ $FILE == \#* ]] && continue
+    BASE="$FILE"
+    
+    FILE="$(echo "$FILE" | xargs)"
+    
+    WITH_OTHER_SOURCE=
+    WITH_HASH=
+    grep -q ':' <<< "$FILE" && WITH_OTHER_SOURCE=true
+    grep -q '|' <<< "$FILE" && WITH_HASH=true
+    [[ $FILE == -* ]] && FILE="${FILE:1}"
+
+    if [ "$WITH_OTHER_SOURCE" ]; then
+        FILE="$(cut -d ':' -f 2 <<< "$FILE")"
+    fi
+
+    if [ "$WITH_HASH" ]; then
+        HASH="$(cut -d '|' -f 2 <<< "$FILE")"
+        FILE="$(cut -d '|' -f 1 <<< "$FILE")"
+    fi
+
+    if [ ! -f "$VENDOR/proprietary/$FILE" ]; then
+        echo -e "\nMissing file: $FILE"
+        continue
+    fi
+
+    if [ "$WITH_HASH" ]; then
+        EXPHASH="$(sha1sum "$VENDOR/proprietary/$FILE" | cut -d ' ' -f 1 | xargs)"
+        if [ "$HASH" != "$EXPHASH" ]; then
+            echo -e "\nIncorrect hash: $FILE (expected $EXPHASH - real $HASH)"
+            continue
+        fi
+    fi
+
+    PFILES+="$FILE"
+
+    echo -n '.'
+done
+
+echo "Checking for redundant files..."
+cd $VENDOR/proprietary
+
+RFILES=""
+for FILE in $(find * -type f); do
+    grep -q "$FILE" $PROPFILES || RFILES="${RFILES}${FILE} "
+    echo -n '.'
+done
+
+if [ "$RFILES" ]; then
+    echo -e "\nRedundant files:"
+    IFS=' '
+    for i in $RFILES; do
+        echo "$i"
+    done
+
+    echo "Remove redundant files? (y/N)"
+    read q
+    grep -q '[yY]' <<< "$q" && (echo "$RFILES" | xargs rm && echo "Done")
+    exit 0
+fi
+
+echo -e "\nEverything is fine!"
